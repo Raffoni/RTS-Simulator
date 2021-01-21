@@ -26,6 +26,9 @@ float SYSTEM_MASS = 0;
 float PAYLOAD_SURFACE = 0.5;
 float CANOPY_SURFACE = 21; 
 
+float R1 = 0.5; //Distance between System CoM and payload CoM
+float R2 = 7.5; // Distance between System CoM and Canopy CoM
+
 float WING_LIFT_COEFFICIENT = 0.001;
 float WING_DRAG_COEFFICIENT = 0.001;
 float WING_A
@@ -70,10 +73,11 @@ class Vector {
     return new Vector(this.x * s, this.y * s, this.z * s); 
   }
   
-  void Add(Vector v) {
-    this.x += v.x;
-    this.y += v.y;
-    this.z += v.z;
+  Vector Add(Vector v) {
+    float x = this.x + v.x;
+    float y = this.y + v.y;
+    float z = this.z + v.z;
+    return new Vector(x, y, z);
   }
   
   float Magnitude() {
@@ -136,16 +140,17 @@ void draw() {
                                             {angular_vel.z, 0, -angular_vel.x},
                                             {-angular_vel.y, angular_vel.x, 0});
   
-  vel_p = vel_com + 
+  vel_p = vel_com.Add(matrixTimesVector(Omega, up.Scale(-R1)));
+  vel_c = vel_com.Add(matrixTimesVector(Omega, up.Scale(R2)));
   
-  float angleOfAttack = atan(vel.z/vel.x);
+  float angleOfAttack = atan(vel_c.z/vel_c.x);
   
   float payloadDragCoeff = CD_0+CD_ALPHA*pow(angleOfAttack, 2);
-  Matrix PayloadAeroForce = new Matrix(new double[][] {{vel.x}, {vel.y}, {vel.z}}).arrayTimes(new Matrix(3, 1, -0.5*FLUID_DENSITY*PAYLOAD_SURFACE*vel.Magnitude()*payloadDragCoeff));
+  Matrix PayloadAeroForce = new Matrix(new double[][] {{vel_p.x}, {vel_p.y}, {vel_p.z}}).arrayTimes(new Matrix(3, 1, -0.5*FLUID_DENSITY*PAYLOAD_SURFACE*vel_p.Magnitude()*payloadDragCoeff));
   
   float canopyDragCoeff = CD_0 + CD_ALPHA*pow(angleOfAttack, 2);
   float canopyLiftCoeff = CL_0 + CL_ALPHA*angleOfAttack;
-  Matrix CanopyAeroForce = new Matrix(new double[][] {vel.z}, {0}, {-vel.x}}).arrayTimes(new Matrix(3, 1, -0.5*FLUID_DENSITY*CANOPY_SURFACE*vel.Magnitude()*payloadDragCoeff))
+  Matrix CanopyAeroForce = new Matrix(new double[][] {{vel_c.z}, {0}, {-vel_c.x}}).arrayTimes(new Matrix(3, 1, -0.5*FLUID_DENSITY*CANOPY_SURFACE*vel.Magnitude()*payloadDragCoeff))
   
   
   Matrix A = new Matrix(, 6, 6);
@@ -247,5 +252,12 @@ Vector angleToVector(float rX, float rY, float rZ) {
   float x = cos(rZ)*cos(rY);
   float y = sin(rZ);
   float z = -sin(rY);
+  return new Vector(x, y, z);
+}
+
+Vector matrixTimesVector(Matrix m, Vector v) { //Matrix must be 3*3
+  float x = v.Dot(new Vector(m.get(0, 0), m.get(0, 1), m.get(0, 2)));
+  float y = v.Dot(new Vector(m.get(1, 0), m.get(1, 1), m.get(1, 2)));
+  float z = v.Dot(new Vector(m.get(2, 0), m.get(2, 1), m.get(2, 2)));
   return new Vector(x, y, z);
 }
