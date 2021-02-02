@@ -8,11 +8,14 @@ Vector vel_com = new Vector(0, 0, 0);
 Vector vel_p = new Vector(0, 0, 0);
 Vector vel_c = new Vector(0, 0, 0);
 
-Vector acc = new Vector(0, 0, 0);
+Vector acc_com = new Vector(0, 0, 0);
 
 float rotX = 0;
 float rotY = 0;
 float rotZ = PI/4;
+
+float asym_control = 0;
+float sym_control = 0;
 
 Vector angular_vel = new Vector(0, 0, 0);
 Vector angular_accel = new Vector(0, 0, 0);
@@ -41,6 +44,18 @@ float CL_0 = 0.4;
 float CL_ALPHA = 2;
 float CD_0 = 0.15;
 float CD_ALPHA = 1;
+float Cl_p = -0.1;
+float Cl_PHI = -0.05;
+float Cm_q = -2;
+float Cm_0 = 0.018;
+float Cn_r = -0.07;
+float Cm_ALPHA = -0.2;
+float CL_DELTA_a = 0.0001;
+float CL_DELTA_s = 0.21;
+float CD_DELTA_a = 0.0001;
+float CD_DELTA_s = 0.3;
+float Cl_DELTA_a = 0.0021;
+float Cn_DELTA_a = 0.004;
 
 //Debug Constants
 int WIREGRID_SIZE = 500; // The size of each cube of the wiregrid
@@ -125,44 +140,96 @@ void setup() {
 void draw() {
   // ---- PARAFOIL DYNAMICS ----
   Vector up = angleToVector(rotX, rotY, rotZ + HALF_PI);
-  double[][] RGPvals = {{0, -up.z, up.y},
-                        {up.z, 0, -up.x},
-                        {-up.y, up.x, 0}};
-  Matrix RGP = new Matrix(RGPvals, 3, 3);
-  SYSTEM_A.setMatrix(new int[]{3, 4, 5}, new int[]{0, 1, 2}, RGP.times(MF));
+  Vector down = angleToVector(rotX, rotY, rotZ - HALF_PI);
   
-  double[][] WBvals = { {-sin(rotY)*(PAYLOAD_MASS + CANOPY_MASS)*GRAVITY},
-                        {sin(rotX)*cos(rotY)*(PAYLOAD_MASS + CANOPY_MASS)*GRAVITY},
-                        {cos(rotX)*cos(rotY)*(PAYLOAD_MASS + CANOPY_MASS)*GRAVITY}};
-  Matrix WB = new Matrix(WBvals, 3, 1);
+  Vector r_gc = up.Scale(R2);
+  Vector r_gp = down.Scale(R1);
+  
+  Matrix R_GC = new Matrix(new double[][] {{0, -r_gc.z, r_gc.y},
+                                          {r_gc.z, 0, -r_gc.x},
+                                          {-r_gc.y, r_gc.x, 0}}, 3, 3);
+                                          
+  Matrix R_GP = new Matrix(new double[][] {{0, -r_gp.z, r_gp.y},
+                                          {r_gp.z, 0, -r_gp.x},
+                                          {-r_gp.y, r_gp.x, 0}}, 3, 3);
+                                          
+  SYSTEM_A.setMatrix(new int[]{3, 4, 5}, new int[]{0, 1, 2}, R_GC.times(MF));
+  
+  Matrix WB = new Matrix(new double[][] { {-sin(rotY)*(PAYLOAD_MASS + CANOPY_MASS)*GRAVITY},
+                                          {sin(rotX)*cos(rotY)*(PAYLOAD_MASS + CANOPY_MASS)*GRAVITY},
+                                          {cos(rotX)*cos(rotY)*(PAYLOAD_MASS + CANOPY_MASS)*GRAVITY}}, 3, 1);
   
   Matrix Omega = new Matrix(new double[][] {{0, -angular_vel.z, angular_vel.y},
                                             {angular_vel.z, 0, -angular_vel.x},
-                                            {-angular_vel.y, angular_vel.x, 0});
+                                            {-angular_vel.y, angular_vel.x, 0}});
   
-  vel_p = vel_com.Add(matrixTimesVector(Omega, up.Scale(-R1)));
-  vel_c = vel_com.Add(matrixTimesVector(Omega, up.Scale(R2)));
+  vel_p = vel_com.Add(matrixTimesVector(Omega, up.Scale(-R1))); // Payload Velocity
+  vel_c = vel_com.Add(matrixTimesVector(Omega, up.Scale(R2))); // Canopy Velocity
   
   float angleOfAttack = atan(vel_c.z/vel_c.x);
   
   float payloadDragCoeff = CD_0+CD_ALPHA*pow(angleOfAttack, 2);
-  Matrix PayloadAeroForce = new Matrix(new double[][] {{vel_p.x}, {vel_p.y}, {vel_p.z}}).arrayTimes(new Matrix(3, 1, -0.5*FLUID_DENSITY*PAYLOAD_SURFACE*vel_p.Magnitude()*payloadDragCoeff));
+  Matrix PayloadAeroForce = new Matrix(new double[][] {{vel_p.x}, {vel_p.y}, {vel_p.z}}).timesEquals(-0.5*FLUID_DENSITY*PAYLOAD_SURFACE*vel_p.Magnitude()*payloadDragCoeff);
   
   float canopyDragCoeff = CD_0 + CD_ALPHA*pow(angleOfAttack, 2);
   float canopyLiftCoeff = CL_0 + CL_ALPHA*angleOfAttack;
-  Matrix CanopyAeroForce = new Matrix(new double[][] {{vel_c.z}, {0}, {-vel_c.x}}).arrayTimes(new Matrix(3, 1, -0.5*FLUID_DENSITY*CANOPY_SURFACE*vel.Magnitude()*payloadDragCoeff))
+  Matrix CanopyAeroForce = new Matrix(new double[][] {{vel_c.z}, {0}, {-vel_c.x}}).timesEquals(-0.5*FLUID_DENSITY*CANOPY_SURFACE*vel.Magnitude()*payloadDragCoeff);
+                    
+  Matrix MA = new Matrix(new double[][] { {Cl_p*WING_B*WING_B*angular_vel.x/(2*vel_c.Magnitude())+Cl_PHI*WING_B*rotX},
+                                          {Cm_q*WING_C*WING_C*angular_vel.y/(2*vel_c.Magnitude())+Cm_0*WING_C+Cm_ALPHA*WING_C*Cm_ALPHA*WING_C*},
+                                          {Cn_r*WING_B*WING_B*angular_vel.z/(2*vel_c.Magnitude())}});
+                                          
+  Matrix PHI = new Matrix( new double[][] {{0, -vel_c.z, vel_c.y},
+                                           {vel_c.z, 0, vel_c.x},
+                                           {-vel_c.y, vel_c.x, 0}});
   
+  A.setMatrix(new int[]{3, 4, 5}, new int[]{0, 1, 2}, R_GC.times(MF));
   
-  Matrix A = new Matrix(, 6, 6);
-  Matrix X = A.solve(B)//Solve the system
+  Matrix S_FA = new Matrix(new double[][] {{(Cl_DELTA_a*vel_c.z - CD_DELTA_a*vel_c.x)*sign(asym_control), Cl_DELTA_a*vel_c.z - CD_DELTA_a*vel_c.x},
+                                          {-CD_DELTA_a*vel_c.y*sign(asym_control), -CD_DELTA_a*vel_c.y},
+                                          {(Cl_DELTA_a*vel_c.x - CD_DELTA_a*vel_c.z)*sign(asym_control), Cl_DELTA_a*vel_c.x - CD_DELTA_a*vel_c.z}}, 3, 2).timesEquals(0.5*FLUID_DENSITY*CANOPY_SURFACE*vel_c.Magnitude());
+                                          
+  Matrix S_MA = new Matrix(new double[][] {{Cl_DELTA_a*WING_B/WING_T, 0},
+                                           {0, 0},
+                                           {Cn_DELTA_a*WING_B/WING_T, 0}}).timesEquals(0.5*FLUID_DENSITY*CANOPY_SURFACE*vel_c.Magnitude()*vel_c.Magnitude());
   
-  pos.x += vel.x;
-  pos.y += vel.y;
-  pos.z += vel.z;
+  Matrix B = new Matrix(6, 3);
+  B.setMatrix(new int[]{0, 1, 2}, new int[]{0, 1, 2}, WB + CanopyAeroForce + PayloadAeroForce - Omega.times(MF).times(vel_c) - (SYSTEM_MASS+MF).times(Omega)*vel_com);
+  B.setMatrix(new int[]{3, 4, 5}, new int[]{0, 1, 2}, MA - PHI*MF*vel_c + RGP*CanopyAeroForce - R_GC*Omega*MF*vel_c + R_GP*PayloadAeroForce - Omega.times(/*_____*/+IF).times(angular_vel));
   
-  rotY += 0.01;
-  rotZ += 0.01;
+  Matrix S = new Matrix(6, 2);
+  S.setMatrix(new int[]{0, 1, 2}, new int[]{0, 1}, S_FA);
+  S.setMatrix(new int[]{3, 4, 5}, new int[]{0, 1}, S_MA + R_GC*S_FA);
   
+  Matrix control = new Matrix(new double[][] {asym_control,
+                                              sym_control}, 2, 1);
+  
+  Matrix X = A.solve(B + S.times(control));
+  
+  // Extract data from answer matrix
+  acc_com.x = X.get(0, 0);
+  acc_com.y = X.get(1, 0);
+  acc_com.z = X.get(2, 0);
+  
+  angular_accel.x = X.get(3, 0); 
+  angular_accel.y = X.get(4, 0);
+  angular_accel.z = X.get(5, 0);
+  
+  vel_com.x += acc_com.x;
+  vel_com.y += acc_com.y;
+  vel_com.z += acc_com.z;
+  
+  pos.x += vel_com.x;
+  pos.y += vel_com.y;
+  pos.z += vel_com.z;
+  
+  angular_vel.x += angular_accel.x;
+  angular_vel.y += angular_accel.y;
+  angular_vel.z += angular_accel.z;
+  
+  rot_X = angular_vel.x;
+  rot_Y = angular_vel.y;
+  rot_Z = angular_vel.z;
   
   // ---- RENDERING ----
   background(84, 152, 255); //Refresh Screen
@@ -260,4 +327,14 @@ Vector matrixTimesVector(Matrix m, Vector v) { //Matrix must be 3*3
   float y = v.Dot(new Vector(m.get(1, 0), m.get(1, 1), m.get(1, 2)));
   float z = v.Dot(new Vector(m.get(2, 0), m.get(2, 1), m.get(2, 2)));
   return new Vector(x, y, z);
+}
+
+int sign(float num) {
+  if (num > 0) {
+    return 1; 
+  } else if (num < 0) {
+    return -1; 
+  } else {
+    return 0; 
+  }
 }
