@@ -1,0 +1,3 @@
+# RTS-Simulator
+6DOF model of a parafoil with payload. Users will be able to develop a control algorithm to safely land the vehicle at a specified landing zone.
+More details soon...
